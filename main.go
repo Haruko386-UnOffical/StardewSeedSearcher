@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -76,6 +77,7 @@ func apiSearch(c *gin.Context) {
 
 	// 1. 初始化启用的预测器功能
 	features := InitializeFeatures(req)
+	SortFeatures(features, req.UseLegacyRandom) // 我靠一个排序真这么管用啊，我知道会管用，但不知道会这么管用
 	totalSeeds := int(req.EndSeed) - req.StartSeed + 1
 
 	// 2. 取消之前的搜索，并创建新的上下文 (Context)
@@ -198,7 +200,7 @@ func apiSearch(c *gin.Context) {
 		wg.Wait()           // 阻塞直到所有 wg.Done() 被调用
 
 		elapsed := time.Since(startTime).Seconds()
-		elapsed = math.Max(elapsed, 0.001) // ✅ 修正：必须用 Max，防止分母为 0
+		elapsed = math.Max(elapsed, 0.001)
 		finalChecked := atomic.LoadInt64(&globalChecked)
 		finalFound := atomic.LoadInt32(&foundCount)
 
@@ -225,7 +227,7 @@ func apiSearch(c *gin.Context) {
 			},
 		}
 
-		// ✅ 正确做法：必须在后台等待彻底完成后，由最后这个“监工”负责关通道
+		// 必须在后台等待彻底完成后，由最后这个“监工”负责关通道
 		close(msgChan)
 	}()
 
@@ -245,7 +247,7 @@ func checkSeed(seed int32, useLegacy bool, features []Features.ISearchFeature) b
 // ---------------- API 和基础工具 ----------------
 
 func wsHandler(c *gin.Context) {
-	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil) // 将普通的http连接转为WebSocket TCP长连接
 	if err != nil {
 		return
 	}
@@ -398,6 +400,12 @@ func CollectAllDetails(seed int32, useLegacy bool, features []Features.ISearchFe
 		}
 	}
 	return details
+}
+
+func SortFeatures(features []Features.ISearchFeature, useLegacy bool) {
+	sort.Slice(features, func(i, j int) bool {
+		return features[i].EstimateCost(useLegacy) < features[j].EstimateCost(useLegacy)
+	})
 }
 
 func GetEnabledFeatures(req SearchRequest) gin.H {
